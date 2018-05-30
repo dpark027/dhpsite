@@ -1,0 +1,1606 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Football Game Visualizer</title>
+        <script type="text/javascript" src="d3/d3.min.js"></script>
+        <script type="text/css"></script>
+    </head>
+    <body>
+        <font face="PT Serif">
+        <h1>Football Game Visualizer</h1>
+        <h4>By Do-Hyoung Park (CS 448B - Fall 2016)</h4>
+
+        <p>Select home team: (Runs in <font color="#ff0000">red</font>, passes in <font color="ff9999">light red</font>)</p>
+        <select name="homefeatured" size="1" id="hometeam">
+            
+        </select>
+
+        <p>Select visiting team: (Runs in <font color="#0000ff">blue</font>, passes in <font color="9999ff">light blue</font>)</p>
+        <select name="roadfeatured" size="1" id="roadteam">
+            
+        </select>
+
+        <p>(Penalties in <font color="#ffcc00">yellow</font>, kickoffs and punts in black)
+
+        <br>
+        <br>
+        <button type="button" id="randombutton">Random Game</button>
+
+        <div id="viz">
+            <svg width="1700" height="1040"></svg>
+        </div>
+
+        <script type="text/javascript">
+
+        // Define global variables
+
+        var padding = 35;
+        var padding2 = 5;
+        var padding3 = 10;
+        var fieldWidth = 360;
+        var playWidth = 300;
+        var playHeight = 0;
+        var bottom = 0;
+        var fieldOff = 0;
+        var fieldSpacing = 30;
+        var tenYards = 30;
+        var twentyFiveYards = 75;
+
+        // fieldTop and fieldBottom are the pixel heights for the top of the field and the bottom of the field
+
+        var fieldTop = 0;
+        var fieldBottom = 0;
+
+        // playAreaTop and playAreaBot are the pixel heights for the top and bottom of the usable field area for
+        // showing plays on the visualization
+
+        var playAreaTop = 0;
+        var playAreaBot = 0;
+
+        // This array holds the horizontal pixel positions of the start of the usable field area for showing plays
+        // in each of the four fields used in the visualization
+
+        var fields = [65, 455, 845, 1235];
+
+        // These variables hold the team codes necessary to associate the codes with the home/road teams
+
+        var homeTeamCode = 674;
+        var awayTeamCode = 529;
+        var firstTeamWithBall = 0;
+        var defaultGameCode = 529067420131107;
+
+        // Initializing data arrays
+
+        var gameList = {};
+        var teamList = {};
+        var allPlays = [];
+        var stadiumList = {};
+        var lastDrive = {};
+        var dropdownRef = {};
+
+        var quarter1 = [];
+        var quarter2 = [];
+        var quarter3 = [];
+        var quarter4 = [];
+
+        var q1plays = 0;
+        var q2plays = 0;
+        var q3plays = 0;
+        var q4plays = 0;
+
+        var q1hm = 0;
+        var q2hm = 0;
+        var q3hm = 0;
+        var q4hm = 0;
+        var finalschm = 0;
+
+        var q1rd = 0;
+        var q2rd = 0;
+        var q3rd = 0;
+        var q4rd = 0;
+        var finalscrd = 0;
+
+        var gameCode = 0;
+
+        // Pixels per second (vertically)
+
+        var pps = 0;
+        var seconds = 900;
+        var textHeight = 0;
+
+        var svg = d3.select("svg"),
+                margin = {top: 20, right: 50, bottom: 20, left: 50},
+                width = svg.attr("width") - margin.left - margin.right,
+                height = svg.attr("height") - margin.top - margin.bottom,
+                g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")")
+                    .attr("id", "canvas");
+
+        get_game_list();
+
+        function update_viz(code) {
+
+            document.getElementById("hometeam").addEventListener("change", check_for_game);
+            document.getElementById("roadteam").addEventListener("change", check_for_game);
+            document.getElementById("randombutton").addEventListener("click", randomize_teams);
+
+            load_drives(code);
+
+        }
+
+        function randomize_teams() {
+
+            var gameIdArray = Object.keys(gameList);
+            var randomGameId = gameIdArray[Math.floor(Math.random()*gameIdArray.length)];
+
+            var randomHome = parseInt(dropdownRef[gameList[randomGameId].homeTeam]);
+            var randomRoad = parseInt(dropdownRef[gameList[randomGameId].roadTeam]);
+
+            document.getElementById("hometeam").selectedIndex = randomHome;
+            document.getElementById("roadteam").selectedIndex = randomRoad;
+
+            check_for_game();
+
+        }
+
+        function check_for_game() {
+
+            var chosenHome = parseInt(document.getElementById("hometeam").value);
+            var chosenRoad = parseInt(document.getElementById("roadteam").value);
+
+            for (i in gameList) {
+
+                if ((parseInt(gameList[i].homeTeam) == chosenHome) && (parseInt(gameList[i].roadTeam) == chosenRoad)) {
+
+                    svg.selectAll("*").remove();
+
+                    svg = d3.select("svg"),
+                        margin = {top: 20, right: 50, bottom: 20, left: 50},
+                        width = svg.attr("width") - margin.left - margin.right,
+                        height = svg.attr("height") - margin.top - margin.bottom,
+                        g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")")
+                            .attr("id", "canvas");
+
+                    allPlays = [];
+
+                    quarter1 = [];
+                    quarter2 = [];
+                    quarter3 = [];
+                    quarter4 = [];
+
+                    draw_framework();
+                    update_viz(parseInt(gameList[i].gameCode));
+
+                    break;
+                }
+
+            }
+
+        }
+
+        function get_game_list() {
+
+            d3.csv("2013stats/game.csv", function(error, data) {
+
+                if (error) {
+                    throw error;
+                }
+
+                for (i = 0; i < data.length; i++) {
+
+                    // Read list of games into an array
+
+                    var gameId = parseInt(data[i].gameCode);
+                    var gameDate = data[i].date;
+                    var gameVisit = data[i].visitTeam;
+                    var gameHome = data[i].homeTeam;
+                    var gameStadium = data[i].stadium;
+
+                    var newGameObj = {gameCode: gameId, date: gameDate, roadTeam: gameVisit, homeTeam: gameHome, stadium: gameStadium};
+
+                    gameList[gameId] = newGameObj;
+
+                }
+
+                get_team_data();
+
+            });
+
+        }
+
+        function load_drives(code) {
+
+            d3.csv("2013stats/drive.csv", function(error, data) {
+
+                if (error) {
+                    throw error;
+                }
+
+                for (i = 0; i < (data.length - 1); i++) {
+
+                    if ((parseInt(data[i].gameCode) == code) && (parseInt(data[i + 1].gameCode) != code)) {
+                        lastDrive = data[i];
+                    }
+
+                }
+
+                load_plays(code);
+
+            });
+
+        }
+
+        function load_plays(code) {
+
+            d3.csv("2013stats/play.csv", function(error, data) {
+
+                if (error) {
+                    throw error;
+                }
+
+                for (i = 0; i < data.length; i++) {
+
+                    if (parseInt(data[i].gameCode) == code) {
+                        var tempobj = new Object();
+                        tempobj = data[i];
+                        allPlays.push(tempobj);
+                    }
+
+                }
+
+                draw_framework();
+                draw_game_attributes(code);
+                get_plays(code);
+                draw_score_box();
+
+            });
+
+        }
+
+        function get_team_data() {
+
+            d3.csv("2013stats/team.csv", function(error, data) {
+
+                if (error) {
+                    throw error;
+                }
+
+                for (i = 0; i < data.length; i++) {
+
+                    // Read list of games into an array
+
+                    var nameTemp = data[i].teamName;
+                    var abbrTemp = data[i].teamAbbr;
+                    var codeTemp = parseInt(data[i].teamCode);
+                    var newTeamObj = {teamName: nameTemp, teamAbbr: abbrTemp};
+
+                    teamList[codeTemp] = newTeamObj;
+
+                    var homeoption = document.createElement("option");
+                    homeoption.text = nameTemp;
+                    homeoption.value = codeTemp;
+
+                    var roadoption = document.createElement("option");
+                    roadoption.text = nameTemp;
+                    roadoption.value = codeTemp;
+
+                    var homeSelect = document.getElementById("hometeam");
+                    var roadSelect = document.getElementById("roadteam");
+
+                    roadSelect.appendChild(roadoption);
+                    homeSelect.appendChild(homeoption);
+
+                    dropdownRef[homeoption.value] = i;
+
+                }
+
+                document.getElementById("hometeam").selectedIndex = 95;
+                document.getElementById("roadteam").selectedIndex = 79;
+
+                get_stadium_data();
+
+            });
+
+        }
+
+        function get_stadium_data() {
+
+            d3.csv("2013stats/stadium.csv", function(error, data) {
+                
+                if (error) {
+                    throw error;
+                }
+
+                for (i = 0; i < data.length; i++) {
+
+                    var stadiumCode = parseInt(data[i].stadiumCode);
+                    var stadiumName = data[i].stadiumName;
+                    var stadiumCity = data[i].city;
+                    var stadiumState = data[i].state;
+
+                    var stadiumObj = {name: stadiumName, city: stadiumCity, state: stadiumState};
+
+                    stadiumList[stadiumCode] = stadiumObj;
+
+                }
+
+                update_viz(defaultGameCode);
+
+            });
+
+        }
+
+        function draw_framework() {
+
+            // Draws the big green box that encapsulates the whole visualization in the SVG
+
+            g.append("rect")
+                .attr("x", 0)
+                .attr("y", 0)
+                .attr("width", width)
+                .attr("height", height)
+                .style("fill", "#228B22")
+                .style("opacity", 1.0);
+
+        }
+
+        function draw_game_attributes(code) {
+
+            // Draws the game final score header
+
+            var finalPlay = allPlays[allPlays.length - 1];
+
+            homeTeamCode = document.getElementById("hometeam").value;
+            roadTeamCode = document.getElementById("roadteam").value;
+
+            var homeTeamName = teamList[homeTeamCode].teamName;
+            var roadTeamName = teamList[roadTeamCode].teamName;
+
+            var homeTeamFinalScore = 0;
+            var roadTeamFinalScore = 0;
+
+            if (parseInt(finalPlay.offenseTeam) == homeTeamCode) {
+                homeTeamFinalScore = parseInt(finalPlay.offensePoints);
+                finalschm = homeTeamFinalScore;
+                roadTeamFinalScore = parseInt(finalPlay.defensePoints);
+                finalscrd = roadTeamFinalScore;
+            } else {
+                homeTeamFinalScore = parseInt(finalPlay.defensePoints);
+                finalschm = homeTeamFinalScore;
+                roadTeamFinalScore = parseInt(finalPlay.offensePoints);
+                finalscrd = roadTeamFinalScore;
+            }
+
+            var finalScoreText = homeTeamName + " " + homeTeamFinalScore + " — " + roadTeamName + " " + roadTeamFinalScore;
+
+            var finalScore = g.append("text")
+                .text(finalScoreText)
+                .attr("x", 0)
+                .attr("y", 0)
+                .attr("class", "final-score")
+                .style("font-family", "verdana")
+                .style("font-size", "50px")
+                .style("fill", "white");
+
+            var bbox = finalScore.node().getBBox();
+            var scoreWidth = bbox.width;
+            var scoreHeight = bbox.height;
+
+            finalScore.attr("transform", "translate(" + padding + "," + (scoreHeight + (padding / 2)) + ")");
+
+            // Draws the game information subheader
+
+            var currentStadium = stadiumList[gameList[code].stadium].name;
+            var currentCity = stadiumList[gameList[code].stadium].city;
+            var currentState = stadiumList[gameList[code].stadium].state;
+            var currentDate = format_date(gameList[code].date);
+
+            var attribsText = currentStadium + " | " + currentCity + ", " + currentState + " | " + currentDate;
+
+            var finalAttribs = g.append("text")
+                .text(attribsText)
+                .attr("x", padding)
+                .attr("y", scoreHeight + (padding / 2))
+                .style("font-family", "verdana")
+                .style("font-size", "24px")
+                .style("fill", "white");
+
+            var newbbox = finalAttribs.node().getBBox();
+            var newWidth = newbbox.width;
+            var newHeight = newbbox.height;
+
+            finalAttribs.attr("transform", "translate(0," + (newHeight + padding2) + ")");
+
+            // Draws four fields (visualization areas) and populates relevant global variables
+
+            for (i = 0; i < 4; i++) {
+
+                bottom = 1000 - padding;
+
+                var quarterLabel = g.append("text")
+                    .text("Quarter " + (i + 1))
+                    .attr("x", padding + fieldSpacing * i + fieldWidth * (i + 0.5))
+                    .attr("y", 0)
+                    .style("font-family", "verdana")
+                    .style("font-size", "18px")
+                    .style("fill", "white");
+
+                var quarterbbox = quarterLabel.node().getBBox();
+                var quarterHeight = quarterbbox.height;
+                var quarterWidth = quarterbbox.width;
+
+                // Populate relevant global variables
+
+                fieldOff = (1.5 * padding) + padding2 + newHeight + scoreHeight + quarterHeight;
+                fieldTop = fieldOff + 3;
+                fieldBottom = bottom - 3;
+
+                quarterLabel.attr("transform", "translate(-" + (quarterWidth / 2) + "," + (fieldOff - padding3) + ")");
+
+                g.append("line")
+                    .attr("x1", padding + fieldSpacing * i + fieldWidth * i)
+                    .attr("y1", fieldOff)
+                    .attr("x2", padding + fieldSpacing * i + fieldWidth * (i + 1))
+                    .attr("y2", fieldOff)
+                    .style("stroke", "white")
+                    .style("stroke-width", 6);
+
+                g.append("line")
+                    .attr("x1", padding + fieldSpacing * i + fieldWidth * i)
+                    .attr("y1", bottom)
+                    .attr("x2", padding + fieldSpacing * i + fieldWidth * (i + 1))
+                    .attr("y2", bottom)
+                    .style("stroke", "white")
+                    .style("stroke-width", 6);
+
+                g.append("rect")
+                    .attr("x", padding + fieldSpacing * i + fieldWidth * i)
+                    .attr("y", fieldOff)
+                    .attr("width", tenYards)
+                    .attr("height", bottom - fieldOff)
+                    .style("fill", "white");
+
+                g.append("rect")
+                    .attr("x", padding + fieldSpacing * i + fieldWidth * (i + 1) - tenYards)
+                    .attr("y", fieldOff)
+                    .attr("width", tenYards)
+                    .attr("height", bottom - fieldOff)
+                    .style("fill", "white");
+
+                var leftg = g.append("text")
+                    .text("G")
+                    .attr("x", fields[i])
+                    .attr("y", fieldTop)
+                    .style("font-family", "courier")
+                    .style("font-size", "12px")
+                    .style("fill", "white");
+
+                var leftbotg = g.append("text")
+                    .text("G")
+                    .attr("x", fields[i])
+                    .attr("y", fieldBottom)
+                    .style("font-family", "courier")
+                    .style("font-size", "12px")
+                    .style("fill", "white");
+
+                var rightg = g.append("text")
+                    .text("G")
+                    .attr("x", fields[i] + playWidth)
+                    .attr("y", fieldTop)
+                    .style("font-family", "courier")
+                    .style("font-size", "12px")
+                    .style("fill", "white");
+
+                var rightbotg = g.append("text")
+                    .text("G")
+                    .attr("x", fields[i] + playWidth)
+                    .attr("y", fieldBottom)
+                    .style("font-family", "courier")
+                    .style("font-size", "12px")
+                    .style("fill", "white");
+
+                var gbbox = leftg.node().getBBox();
+                var gWidth = gbbox.width;
+                var gHeight = gbbox.height;
+
+                playAreaTop = fieldTop + gHeight + 9;
+                playAreaBot = fieldBottom - gHeight - 7;
+
+                pps = (playAreaBot - playAreaTop) / seconds;
+
+                leftg.attr("transform", "translate(" + (gWidth * 0.5) + "," + gHeight + ")");
+                rightg.attr("transform", "translate(-" + (gWidth * 1.5) + "," + gHeight + ")");
+
+                leftbotg.attr("transform", "translate(" + (gWidth * 0.5) + ",-5)");
+                rightbotg.attr("transform", "translate(-" + (gWidth * 1.5) + ",-5)");
+
+                playHeight = fieldBottom - fieldTop - (2 * gHeight);
+
+                // Draw the yardage numbers on the four fields
+
+                for (j = 1; j <= 3; j++) {
+
+                    g.append("line")
+                        .attr("x1", fields[i] + (j * twentyFiveYards))
+                        .attr("x2", fields[i] + (j * twentyFiveYards))
+                        .attr("y1", fieldOff)
+                        .attr("y2", bottom)
+                        .style("stroke", "white")
+                        .style("stroke-width", 2);
+
+                    if (j % 2 == 0) {
+
+                        var five = g.append("text")
+                            .text("5")
+                            .attr("x", fields[i] + (j * twentyFiveYards))
+                            .attr("y", fieldTop)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", "white");
+
+                        var zero = g.append("text")
+                            .text("0")
+                            .attr("x", fields[i] + (j * twentyFiveYards))
+                            .attr("y", fieldTop)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", "white");
+
+                        var botfive = g.append("text")
+                            .text("5")
+                            .attr("x", fields[i] + (j * twentyFiveYards))
+                            .attr("y", fieldBottom)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", "white");
+
+                        var botzero = g.append("text")
+                            .text("0")
+                            .attr("x", fields[i] + (j * twentyFiveYards))
+                            .attr("y", fieldBottom)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", "white");
+
+                        var fivebbox = five.node().getBBox();
+                        var fiveWidth = fivebbox.width;
+                        var fiveHeight = fivebbox.height;
+
+                        var zerobbox = zero.node().getBBox();
+                        var zeroWidth = zerobbox.width;
+                        var zeroHeight = zerobbox.height;
+
+                        five.attr("transform", "translate(-" + (fiveWidth * 1.5) + "," + fiveHeight + ")");
+                        zero.attr("transform", "translate(" + (zeroWidth * 0.5) + "," + zeroHeight + ")");
+
+                        botfive.attr("transform", "translate(-" + (fiveWidth * 1.5) + ",-5)");
+                        botzero.attr("transform", "translate(" + (zeroWidth * 0.5) + ",-5)");
+
+                    } else {
+
+                        var two = g.append("text")
+                            .text("2")
+                            .attr("x", fields[i] + (j * twentyFiveYards))
+                            .attr("y", fieldTop)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", "white");
+
+                        var five = g.append("text")
+                            .text("5")
+                            .attr("x", fields[i] + (j * twentyFiveYards))
+                            .attr("y", fieldTop)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", "white");
+
+                        var bottwo = g.append("text")
+                            .text("2")
+                            .attr("x", fields[i] + (j * twentyFiveYards))
+                            .attr("y", fieldBottom)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", "white");
+
+                        var botfive = g.append("text")
+                            .text("5")
+                            .attr("x", fields[i] + (j * twentyFiveYards))
+                            .attr("y", fieldBottom)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", "white");
+
+                        var twobbox = two.node().getBBox();
+                        var twoWidth = twobbox.width;
+                        var twoHeight = twobbox.height;
+
+                        var fivebbox = five.node().getBBox();
+                        var fiveWidth = fivebbox.width;
+                        var fiveHeight = fivebbox.height;
+
+                        two.attr("transform", "translate(-" + (twoWidth * 1.5) + "," + twoHeight + ")");
+                        five.attr("transform", "translate(" + (fiveWidth * 0.5) + "," + fiveHeight + ")");
+
+                        bottwo.attr("transform", "translate(-" + (twoWidth * 1.5) + ",-5)");
+                        botfive.attr("transform", "translate(" + (fiveWidth * 0.5) + ",-5)");
+
+                    }
+
+                }
+
+            }
+
+        }
+
+        function format_date(date) {
+            
+            var str = date.split("/");
+            var month = parseInt(str[0]);
+            var day = str[1];
+            var year = str[2];
+
+            var finalString = "";
+
+            switch (month) {
+                case 1:
+                    finalString = finalString + "Jan. "
+                    break;
+                case 2:
+                    finalString = finalString + "Feb. "
+                    break;
+                case 3:
+                    finalString = finalString + "March "
+                    break;
+                case 4:
+                    finalString = finalString + "April "
+                    break;
+                case 5:
+                    finalString = finalString + "May "
+                    break;
+                case 6:
+                    finalString = finalString + "June "
+                    break;
+                case 7:
+                    finalString = finalString + "July "
+                    break;
+                case 8:
+                    finalString = finalString + "August "
+                    break;
+                case 9:
+                    finalString = finalString + "Sept. "
+                    break;
+                case 10:
+                    finalString = finalString + "Oct. "
+                    break;
+                case 11:
+                    finalString = finalString + "Nov. "
+                    break;
+                default:
+                    finalString = finalString + "Dec. "
+            }
+
+            finalString = finalString + day + ", 20" + year;
+
+            return finalString;
+
+        }
+
+        function draw_score_box() {
+
+            // Draws the score box in the top right-hand quarter, demarcated into quarters and final score
+            
+            g.append("line")
+                .attr("x1", fields[3] - tenYards)
+                .attr("x2", fields[3] - tenYards)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards + 115)
+                .attr("x2", fields[3] - tenYards + 115)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards + 120)
+                .attr("x2", fields[3] - tenYards + 120)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards + 165)
+                .attr("x2", fields[3] - tenYards + 165)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards + 210)
+                .attr("x2", fields[3] - tenYards + 210)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards + 255)
+                .attr("x2", fields[3] - tenYards + 255)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards + 300)
+                .attr("x2", fields[3] - tenYards + 300)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards + 305)
+                .attr("x2", fields[3] - tenYards + 305)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] + fieldWidth - tenYards)
+                .attr("x2", fields[3] + fieldWidth - tenYards)
+                .attr("y1", padding)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards)
+                .attr("x2", fields[3] + fieldWidth - tenYards)
+                .attr("y1", padding)
+                .attr("y2", padding)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards)
+                .attr("x2", fields[3] + fieldWidth - tenYards)
+                .attr("y1", padding * 3.5)
+                .attr("y2", padding * 3.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards)
+                .attr("x2", fields[3] + fieldWidth - tenYards)
+                .attr("y1", padding * 1.5)
+                .attr("y2", padding * 1.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("line")
+                .attr("x1", fields[3] - tenYards)
+                .attr("x2", fields[3] + fieldWidth - tenYards)
+                .attr("y1", padding * 2.5)
+                .attr("y2", padding * 2.5)
+                .style("stroke", "white")
+                .style("stroke-width", 2);
+
+            g.append("text")
+                .text(teamList[parseInt(roadTeamCode)].teamAbbr)
+                .attr("x", fields[3] - tenYards + 10)
+                .attr("y", padding * 2.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "#0000ff");
+
+            g.append("text")
+                .text(teamList[parseInt(homeTeamCode)].teamAbbr)
+                .attr("x", fields[3] - tenYards + 10)
+                .attr("y", padding * 3.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "#ff0000");
+
+            if (parseInt(quarter2[0].offenseTeam) == homeTeamCode) {
+                q1hm = parseInt(quarter2[0].offensePoints);
+                q1rd = parseInt(quarter2[0].defensePoints);
+            } else {
+                q1hm = parseInt(quarter2[0].defensePoints);
+                q1rd = parseInt(quarter2[0].offensePoints);
+            }
+
+            if (parseInt(quarter3[0].offenseTeam) == homeTeamCode) {
+                q2hm = parseInt(quarter3[0].offensePoints) - q1hm;
+                q2rd = parseInt(quarter3[0].defensePoints) - q1rd;
+            } else {
+                q2hm = parseInt(quarter3[0].defensePoints) - q1hm;
+                q2rd = parseInt(quarter3[0].offensePoints) - q1rd;
+            }
+
+            if (parseInt(quarter4[0].offenseTeam) == homeTeamCode) {
+                q3hm = parseInt(quarter4[0].offensePoints) - q1hm - q2hm;
+                q3rd = parseInt(quarter4[0].defensePoints) - q1rd - q2rd;
+            } else {
+                q3hm = parseInt(quarter4[0].defensePoints) - q1hm - q2hm;
+                q3rd = parseInt(quarter4[0].offensePoints) - q1rd - q2rd;
+            }
+
+            q4hm = finalschm - q1hm - q2hm - q3hm;
+            q4rd = finalscrd - q1rd - q2rd - q3rd;
+
+            var firstqrd = g.append("text")
+                .text(q1rd)
+                .attr("x", fields[3] - tenYards + 142)
+                .attr("y", padding * 2.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var secondqrd = g.append("text")
+                .text(q2rd)
+                .attr("x", fields[3] - tenYards + 187)
+                .attr("y", padding * 2.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var thirdqrd = g.append("text")
+                .text(q3rd)
+                .attr("x", fields[3] - tenYards + 232)
+                .attr("y", padding * 2.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var fourthqrd = g.append("text")
+                .text(q4rd)
+                .attr("x", fields[3] - tenYards + 277)
+                .attr("y", padding * 2.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var finalrd = g.append("text")
+                .text(finalscrd)
+                .attr("x", fields[3] - tenYards + 332)
+                .attr("y", padding * 2.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var firstqhm = g.append("text")
+                .text(q1hm)
+                .attr("x", fields[3] - tenYards + 142)
+                .attr("y", padding * 3.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var secondqhm = g.append("text")
+                .text(q2hm)
+                .attr("x", fields[3] - tenYards + 187)
+                .attr("y", padding * 3.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var thirdqhm = g.append("text")
+                .text(q3hm)
+                .attr("x", fields[3] - tenYards + 232)
+                .attr("y", padding * 3.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var fourthqhm = g.append("text")
+                .text(q4hm)
+                .attr("x", fields[3] - tenYards + 277)
+                .attr("y", padding * 3.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var finalhm = g.append("text")
+                .text(finalschm)
+                .attr("x", fields[3] - tenYards + 332)
+                .attr("y", padding * 3.2)
+                .style("font-family", "courier")
+                .style("font-size", "20px")
+                .style("fill", "white");
+
+            var firstqrdwidth = firstqrd.node().getBBox().width;
+            var secondqrdwidth = secondqrd.node().getBBox().width;
+            var thirdqrdwidth = thirdqrd.node().getBBox().width;
+            var fourthqrdwidth = fourthqrd.node().getBBox().width;
+            var finalrdwidth = finalrd.node().getBBox().width;
+
+            var firstqhmwidth = firstqhm.node().getBBox().width;
+            var secondqhmwidth = secondqhm.node().getBBox().width;
+            var thirdqhmwidth = thirdqhm.node().getBBox().width;
+            var fourthqhmwidth = fourthqhm.node().getBBox().width;
+            var finalhmwidth = finalhm.node().getBBox().width;
+
+            firstqrd.attr("transform", "translate(-" + (firstqrdwidth / 2) + ",0)");
+            secondqrd.attr("transform", "translate(-" + (secondqrdwidth / 2) + ",0)");
+            thirdqrd.attr("transform", "translate(-" + (thirdqrdwidth / 2) + ",0)");
+            fourthqrd.attr("transform", "translate(-" + (fourthqrdwidth / 2) + ",0)");
+            finalrd.attr("transform", "translate(-" + (finalrdwidth / 2) + ",0)");
+
+            firstqhm.attr("transform", "translate(-" + (firstqhmwidth / 2) + ",0)");
+            secondqhm.attr("transform", "translate(-" + (secondqhmwidth / 2) + ",0)");
+            thirdqhm.attr("transform", "translate(-" + (thirdqhmwidth / 2) + ",0)");
+            fourthqhm.attr("transform", "translate(-" + (fourthqhmwidth / 2) + ",0)");
+            finalhm.attr("transform", "translate(-" + (finalhmwidth / 2) + ",0)");
+
+        }
+
+        function get_plays(code) {
+
+            // Read in data from .csv file
+
+            for (i = 0; i < allPlays.length; i++) {
+
+                allPlays[i].playType = allPlays[i].playType.trim();
+
+                switch(parseInt(allPlays[i].periodNumber)) {
+                    case 1:
+                        quarter1.push(allPlays[i]);
+                        break;
+                    case 2:
+                        quarter2.push(allPlays[i]);
+                        break;
+                    case 3:
+                        quarter3.push(allPlays[i]);
+                        break;
+                    default:
+                        quarter4.push(allPlays[i]);
+                }
+
+            }
+
+            firstTeamWithBall = parseInt(quarter1[0].defenseTeam);
+            gameCode = code;
+
+            var lastPlayOfGame = {offenseTeam: parseInt(lastDrive.teamCode), spot: parseInt(lastDrive.endSpot), playType: ""};
+
+            if (lastDrive.endReason == "TOUCHDOWN") {
+                lastPlayOfGame.playType = "ATTEMPT";
+            } else if (lastDrive.endReason == "FIELD GOAL") {
+                lastPlayOfGame.playType = "KICKOFF";
+            } else {
+                lastPlayOfGame.playType = "RUSH";
+            }
+
+            draw_plays(quarter1, quarter2[0], false);
+            draw_plays(quarter2, quarter3[0], false);
+            draw_plays(quarter3, quarter4[0], false);
+            draw_plays(quarter4, lastPlayOfGame, true);
+
+        }
+
+        function draw_plays(quarter, firstPlayNextQ, isFourthQ) {
+
+            // Draws plays onto the four fields (visualization areas), reading play data from the data
+            // array/object that we populated earlier
+
+            var clockReadings = {};
+            var clockReadingsArray = [];
+            var quarterNum = parseInt(quarter[0].periodNumber);
+            var firstPlayNum = parseInt(quarter[0].playNumber);
+            var offset = 0;
+
+            // offset denotes the discrepancy between the indexing in quarter and the actual play number
+            // in each quarter (necessary for vertical positioning needs later)
+
+            if (quarterNum == 1) {
+                q1plays = quarter.length;
+            }
+
+            if (quarterNum == 2) {
+                q2plays = quarter.length;
+                offset = q1plays;
+            }
+
+            if (quarterNum == 3) {
+                q3plays = quarter.length;
+                offset = q1plays + q2plays;
+            }
+
+            if (quarterNum == 4) {
+                q4plays = quarter.length;
+                offset = q1plays + q2plays + q3plays;
+            }
+
+            var currqplays = quarter.length;
+
+            // Reading known clock values and their associated play numbers into both an object and array
+            // (necessary for clock value interpolation within drives)
+
+            for (i = 0; i < currqplays; i++) {
+
+                if (quarter[i].clock != "") {
+                    clockReadings[parseInt(quarter[i].playNumber)] = parseInt(quarter[i].clock);
+                    clockReadingsArray.push(parseInt(quarter[i].playNumber));
+                }
+
+            }
+
+            // Adds in the final zero time value for each quarter in a dummy play (one beyond actual final
+            // play number for quarter) to make sure final drive of quarter scales properly time-wise
+
+            clockReadings[parseInt(quarter[currqplays - 1].playNumber) + 1] = 0;
+            clockReadingsArray.push(parseInt(quarter[currqplays - 1].playNumber) + 1);
+
+            // Interpolates clock values for each play based on surrounding clock values and play numbers
+
+            for (i = 0; i < (clockReadingsArray.length - 1); i++) {
+
+                var firstPlay = clockReadingsArray[i];
+                var lastPlay = clockReadingsArray[i + 1]
+                var firstPlayTime = clockReadings[firstPlay];
+                var lastPlayTime = clockReadings[lastPlay];
+
+                var timeJump = (firstPlayTime - lastPlayTime) / (lastPlay - firstPlay);
+
+                for (j = firstPlay; j < (lastPlay - 1); j++) {
+
+                    var newTime = firstPlayTime - (timeJump * (j - firstPlay + 1));
+                    quarter[j - offset].clock = newTime;
+
+                }
+
+            }
+
+            // Parses integer values for several key attributes of each play
+
+            for (i = 0; i < currqplays; i++) {
+
+                quarter[i].clock = parseInt(quarter[i].clock);
+                quarter[i].offenseTeam = parseInt(quarter[i].offenseTeam);
+                quarter[i].defenseTeam = parseInt(quarter[i].defenseTeam);
+                quarter[i].playNumber = parseInt(quarter[i].playNumber);
+                quarter[i].spot = parseInt(quarter[i].spot);
+
+            }
+
+            // Actually draws out the plays based on data populated earlier in this function
+
+            for (i = 0; i < currqplays; i++) {
+
+                if (quarter[i].playType != "ATTEMPT") {
+
+                    var vertPos = ((seconds - quarter[i].clock) * pps) + playAreaTop;
+                    var color = "";
+
+                    // absoluteSpot refers to the yardage of the spot of the play, with 0 being
+                    // the left end zone and 100 being the right end zone
+
+                    var absoluteSpot = 0;
+                    var absoluteSpotNew = 0;
+
+                    if (quarter[i].offenseTeam == homeTeamCode) {
+                        absoluteSpot = quarter[i].spot;
+                    } else {
+                        absoluteSpot = 100 - quarter[i].spot;
+                    }
+
+                    if (i == (currqplays - 1)) {
+
+                        // Accounts for edge case where we're at the last play of the quarter and
+                        // need to reference the first play of the next quarter to figure out the
+                        // new spot
+
+                        if (firstPlayNextQ.offenseTeam == homeTeamCode) {
+                            if (firstPlayNextQ.playType == "ATTEMPT") {
+                                absoluteSpotNew = 0;
+                            } else {
+                                absoluteSpotNew = firstPlayNextQ.spot;
+                            }
+                        } else {
+                            if (firstPlayNextQ.playType == "ATTEMPT") {
+                                absoluteSpotNew = 100;
+                            } else {
+                                absoluteSpotNew = 100 - firstPlayNextQ.spot;
+                            }
+                        }
+                    } else {
+
+                        // Default case
+
+                        if (quarter[i + 1].offenseTeam == homeTeamCode) {
+                            if (quarter[i + 1].playType == "ATTEMPT") {
+                                absoluteSpotNew = 0;
+                            } else {
+                                absoluteSpotNew = quarter[i + 1].spot;
+                            }
+                        } else {
+                            if (quarter[i + 1].playType == "ATTEMPT") {
+                                absoluteSpotNew = 100;
+                            } else {
+                                absoluteSpotNew = 100 - quarter[i + 1].spot;
+                            }
+                        }
+                    }
+
+                    // Encode horizontal pixel location for marks
+
+                    var horizPos = fields[quarterNum - 1] + (3 * absoluteSpot);
+                    var horizPosNew = fields[quarterNum - 1] + (3 * absoluteSpotNew);
+
+                    // Figure out what color to use, according to:
+                    // Black = Special teams and timeouts
+                    // Red = Home team rush
+                    // Pink = Home team pass
+                    // Blue = Visiting team rush
+                    // Light blue = Visiting team pass
+                    // Yellow = Penalty
+
+                    if (quarter[i].playType == "KICKOFF" || quarter[i].playType == "PUNT" || quarter[i].playType == "FIELD_GOAL" || quarter[i].playType == "TIMEOUT") {
+                        color = "#000000";
+                    } else if (quarter[i].playType == "PENALTY") {
+                        color = "#ffcc00";
+                    } else if (quarter[i].playType == "RUSH") {
+                        if (quarter[i].offenseTeam == homeTeamCode) {
+                            color = "#ff0000";
+                        } else {
+                            color = "#0000ff";
+                        }
+                    } else if (quarter[i].playType == "PASS") {
+                        if (quarter[i].offenseTeam == homeTeamCode) {
+                            color = "#ff9999";
+                        } else {
+                            color = "#9999ff";
+                        }
+                    }
+
+                    // Add marks depending on the play type
+
+                    if (quarter[i].playType == "TIMEOUT") {
+                        var timeoutText = g.append("text")
+                            .text("=")
+                            .attr("x", horizPos - 4)
+                            .attr("y", vertPos + 4)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", color);
+
+                        var timeoutbbox = timeoutText.node().getBBox();
+                        var timeoutheight = timeoutbbox.height;
+                        var timeoutwidth = timeoutbbox.width;
+
+                    } else if (quarter[i].playType == "FIELD_GOAL") {
+                        var distanceText = quarter[i].spot + 17;
+                        var timeoutText = g.append("text")
+                            .text(distanceText)
+                            .attr("x", horizPos - 8)
+                            .attr("y", vertPos + 4)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", color);
+
+                        var timeoutbbox = timeoutText.node().getBBox();
+                        var timeoutheight = timeoutbbox.height;
+                        var timeoutwidth = timeoutbbox.width;
+
+                    } else if ((quarter[i].playType == "PASS") && (absoluteSpot == absoluteSpotNew)) {
+                        var timeoutText = g.append("text")
+                            .text("I")
+                            .attr("x", horizPos - 4)
+                            .attr("y", vertPos + 4)
+                            .style("font-family", "courier")
+                            .style("font-size", "12px")
+                            .style("fill", color);
+
+                        var timeoutbbox = timeoutText.node().getBBox();
+                        var timeoutheight = timeoutbbox.height;
+                        var timeoutwidth = timeoutbbox.width;
+
+                    } else {
+                        g.append("line")
+                            .attr("x1", horizPos)
+                            .attr("x2", horizPosNew)
+                            .attr("y1", vertPos)
+                            .attr("y2", vertPos)
+                            .style("stroke", color)
+                            .style("stroke-width", 7);
+
+                    }
+
+                    // If it's a touchdown, add a bar (this is redundant for a normal touchdown
+                    // but adds a bar for defensive and special teams touchdowns that wouldn't
+                    // be present otherwise)
+
+                    if (absoluteSpotNew == 0 || absoluteSpotNew == 100) {
+                        var tdColor = "";
+
+                        if (absoluteSpotNew == 0) {
+                            tdColor = "#ff0000";
+                        } else {
+                            tdColor = "#0000ff";
+                        }
+
+                        g.append("line")
+                            .attr("x1", horizPos)
+                            .attr("x2", horizPosNew)
+                            .attr("y1", vertPos)
+                            .attr("y2", vertPos)
+                            .style("stroke", color)
+                            .style("stroke-width", 7);
+                    }
+
+                    // == NEEDS UPDATE ==
+                    // (Account for safeties)
+
+                    // Add score updates in the margins after touchdowns
+
+                    if (absoluteSpotNew == 0) {
+                        // A home touchdown has occurred
+                        var score = "";
+                        var homeScore = 0;
+                        var roadScore = 0;
+                        var index = i + 1;
+                        var tdColor = "#ff0000";
+
+                        while (true) {
+
+                            if (quarter[index].playType == "KICKOFF") {
+                                break;
+                            }
+
+                            index = index + 1;
+
+                        }
+
+                        if (parseInt(quarter[index].offenseTeam) == homeTeamCode) {
+                            homeScore = parseInt(quarter[index].offensePoints);
+                            roadScore = parseInt(quarter[index].defensePoints);
+                        } else {
+                            homeScore = parseInt(quarter[index].defensePoints);
+                            roadScore = parseInt(quarter[index].offensePoints);
+                        }
+
+                        score = score + homeScore + "-" + roadScore;
+
+                        g.append("text")
+                            .text(score)
+                            .attr("x", fields[quarterNum - 1] - 35)
+                            .attr("y", vertPos + 4)
+                            .style("font-family", "courier")
+                            .style("font-size", "11px")
+                            .style("fill", tdColor);
+
+                        g.append("text")
+                            .text("TD")
+                            .attr("x", fields[quarterNum - 1] - 35)
+                            .attr("y", vertPos - 8)
+                            .style("font-family", "courier")
+                            .style("font-size", "11px")
+                            .style("fill", tdColor);
+
+                    } else if (absoluteSpotNew == 100) {
+                        var score = "";
+                        var homeScore = 0;
+                        var roadScore = 0;
+                        var index = i + 1;
+                        var tdColor = "#0000ff";
+
+                        while (true) {
+
+                            if (quarter[index].playType == "KICKOFF") {
+                                break;
+                            }
+
+                            index = index + 1;
+
+                        }
+
+                        if (parseInt(quarter[index].offenseTeam) == homeTeamCode) {
+                            homeScore = parseInt(quarter[index].offensePoints);
+                            roadScore = parseInt(quarter[index].defensePoints);
+                        } else {
+                            homeScore = parseInt(quarter[index].defensePoints);
+                            roadScore = parseInt(quarter[index].offensePoints);
+                        }
+
+                        score = score + roadScore + "-" + homeScore;
+
+                        g.append("text")
+                            .text(score)
+                            .attr("x", fields[quarterNum - 1] + playWidth + 2)
+                            .attr("y", vertPos + 4)
+                            .style("font-family", "courier")
+                            .style("font-size", "11px")
+                            .style("fill", tdColor);
+
+                        g.append("text")
+                            .text("TD")
+                            .attr("x", fields[quarterNum - 1] + playWidth + 2)
+                            .attr("y", vertPos - 8)
+                            .style("font-family", "courier")
+                            .style("font-size", "11px")
+                            .style("fill", tdColor);
+                    }
+
+                    // Add score updates in the margins after field goals
+
+                    if ((allPlays[i + offset].playType == "FIELD_GOAL") && (allPlays[i + offset + 1].playType == "KICKOFF")) {
+                        if (parseInt(quarter[i].offenseTeam) == homeTeamCode) {
+                            var score = "";
+                            var homeScore = 0;
+                            var roadScore = 0;
+                            var index = i + 1;
+                            var tdColor = "#ff0000";
+
+                            if (parseInt(allPlays[i + offset + 1].offenseTeam) == homeTeamCode) {
+                                homeScore = parseInt(allPlays[i + offset + 1].offensePoints);
+                                roadScore = parseInt(allPlays[i + offset + 1].defensePoints);
+                            } else {
+                                homeScore = parseInt(allPlays[i + offset + 1].defensePoints);
+                                roadScore = parseInt(allPlays[i + offset + 1].offensePoints);
+                            }
+
+                            score = score + homeScore + "-" + roadScore;
+
+                            g.append("text")
+                                .text(score)
+                                .attr("x", fields[quarterNum - 1] - 35)
+                                .attr("y", vertPos + 4)
+                                .style("font-family", "courier")
+                                .style("font-size", "11px")
+                                .style("fill", tdColor);
+
+                            g.append("text")
+                                .text("FG")
+                                .attr("x", fields[quarterNum - 1] - 35)
+                                .attr("y", vertPos - 8)
+                                .style("font-family", "courier")
+                                .style("font-size", "11px")
+                                .style("fill", tdColor);
+                        } else {
+                            // Road team has scored a field goal
+                            var score = "";
+                            var homeScore = 0;
+                            var roadScore = 0;
+                            var index = i + 1;
+                            var tdColor = "#0000ff";
+
+                            if (parseInt(allPlays[i + offset + 1].offenseTeam) == homeTeamCode) {
+                                homeScore = parseInt(allPlays[i + offset + 1].offensePoints);
+                                roadScore = parseInt(allPlays[i + offset + 1].defensePoints);
+                            } else {
+                                homeScore = parseInt(allPlays[i + offset + 1].defensePoints);
+                                roadScore = parseInt(allPlays[i + offset + 1].offensePoints);
+                            }
+
+                            score = score + roadScore + "-" + homeScore;
+
+                            g.append("text")
+                                .text(score)
+                                .attr("x", fields[quarterNum - 1] + playWidth + 2)
+                                .attr("y", vertPos + 4)
+                                .style("font-family", "courier")
+                                .style("font-size", "11px")
+                                .style("fill", tdColor);
+
+                            g.append("text")
+                                .text("FG")
+                                .attr("x", fields[quarterNum - 1] + playWidth + 2)
+                                .attr("y", vertPos - 8)
+                                .style("font-family", "courier")
+                                .style("font-size", "11px")
+                                .style("fill", tdColor);
+                        }
+
+                        if ((i == (currqplays - 1)) && (isFourthQ) && (firstPlayNextQ.playType == "ATTEMPT")) {
+                            // Somebody has scored a game-ending touchdown
+                            if (absoluteSpotNew == 0) {
+                                // It's the home team
+                                var score = "";
+                                var homeScore = parseInt(quarter[i].offensePoints) + 6;
+                                var roadScore = parseInt(quarter[i].defensePoints);
+                                var tdColor = "#ff0000";
+
+                                score = score + homeScore + "-" + roadScore;
+
+                                g.append("text")
+                                    .text(score)
+                                    .attr("x", fields[quarterNum - 1] - 35)
+                                    .attr("y", vertPos + 4)
+                                    .style("font-family", "courier")
+                                    .style("font-size", "11px")
+                                    .style("fill", tdColor);
+
+                                g.append("text")
+                                    .text("FG")
+                                    .attr("x", fields[quarterNum - 1] - 35)
+                                    .attr("y", vertPos - 8)
+                                    .style("font-family", "courier")
+                                    .style("font-size", "11px")
+                                    .style("fill", tdColor);
+
+                                var elem = document.getElementsByClassName("final-score")[0];
+                                elem.remove();
+                                var homeTeamName = teamList[homeTeamCode].teamName;
+                                var roadTeamName = teamList[roadTeamCode].teamName;
+
+                                var finalScoreText = homeTeamName + " " + homeScore + " — " + roadTeamName + " " + roadScore;
+
+                                var finalScore = g.append("text")
+                                    .text(finalScoreText)
+                                    .attr("x", 0)
+                                    .attr("y", 0)
+                                    .attr("class", "final-score")
+                                    .style("font-family", "verdana")
+                                    .style("font-size", "50px")
+                                    .style("fill", "white");
+
+                                var bbox = finalScore.node().getBBox();
+                                var scoreWidth = bbox.width;
+                                var scoreHeight = bbox.height;
+
+                                finalScore.attr("transform", "translate(" + padding + "," + (scoreHeight + (padding / 2)) + ")");
+                            } else {
+                                // It's the road team
+                                var score = "";
+                                var roadScore = parseInt(quarter[i].offensePoints) + 6;
+                                var homeScore = parseInt(quarter[i].defensePoints);
+                                var tdColor = "#ff0000";
+
+                                score = score + roadScore + "-" + homeScore;
+
+                                g.append("text")
+                                    .text(score)
+                                    .attr("x", fields[quarterNum - 1] + playWidth + 2)
+                                    .attr("y", vertPos + 4)
+                                    .style("font-family", "courier")
+                                    .style("font-size", "11px")
+                                    .style("fill", tdColor);
+
+                                g.append("text")
+                                    .text("TD")
+                                    .attr("x", fields[quarterNum - 1] + playWidth + 2)
+                                    .attr("y", vertPos - 8)
+                                    .style("font-family", "courier")
+                                    .style("font-size", "11px")
+                                    .style("fill", tdColor);
+
+                                var elem = document.getElementsByClassName("final-score")[0];
+                                elem.remove();
+                                var homeTeamName = teamList[homeTeamCode].teamName;
+                                var roadTeamName = teamList[roadTeamCode].teamName;
+
+                                var finalScoreText = homeTeamName + " " + homeScore + " — " + roadTeamName + " " + roadScore;
+
+                                var finalScore = g.append("text")
+                                    .text(finalScoreText)
+                                    .attr("x", 0)
+                                    .attr("y", 0)
+                                    .attr("class", "final-score")
+                                    .style("font-family", "verdana")
+                                    .style("font-size", "50px")
+                                    .style("fill", "white");
+
+                                var bbox = finalScore.node().getBBox();
+                                var scoreWidth = bbox.width;
+                                var scoreHeight = bbox.height;
+
+                                finalScore.attr("transform", "translate(" + padding + "," + (scoreHeight + (padding / 2)) + ")");
+                            }
+                        }
+
+                        if ((i == (currqplays - 1)) && (isFourthQ) && (firstPlayNextQ.playType == "KICKOFF")) {
+                            // Somebody has scored a game-ending field goal
+                            if (parseInt(quarter[i].offenseTeam) == homeTeamCode) {
+                                // It was the home team
+                                var score = "";
+                                var homeScore = parseInt(quarter[i].offensePoints) + 3;
+                                var roadScore = parseInt(quarter[i].defensePoints);
+                                var tdColor = "#ff0000";
+
+                                score = score + homeScore + "-" + roadScore;
+
+                                g.append("text")
+                                    .text(score)
+                                    .attr("x", fields[quarterNum - 1] - 35)
+                                    .attr("y", vertPos + 4)
+                                    .style("font-family", "courier")
+                                    .style("font-size", "11px")
+                                    .style("fill", tdColor);
+
+                                g.append("text")
+                                    .text("FG")
+                                    .attr("x", fields[quarterNum - 1] - 35)
+                                    .attr("y", vertPos - 8)
+                                    .style("font-family", "courier")
+                                    .style("font-size", "11px")
+                                    .style("fill", tdColor);
+
+                                var elem = document.getElementsByClassName("final-score")[0];
+                                elem.remove();
+                                var homeTeamName = teamList[homeTeamCode].teamName;
+                                var roadTeamName = teamList[roadTeamCode].teamName;
+
+                                var finalScoreText = homeTeamName + " " + homeScore + " — " + roadTeamName + " " + roadScore;
+
+                                var finalScore = g.append("text")
+                                    .text(finalScoreText)
+                                    .attr("x", 0)
+                                    .attr("y", 0)
+                                    .attr("class", "final-score")
+                                    .style("font-family", "verdana")
+                                    .style("font-size", "50px")
+                                    .style("fill", "white");
+
+                                var bbox = finalScore.node().getBBox();
+                                var scoreWidth = bbox.width;
+                                var scoreHeight = bbox.height;
+
+                                finalScore.attr("transform", "translate(" + padding + "," + (scoreHeight + (padding / 2)) + ")");
+                            } else {
+                                // It was the road team
+                                var score = "";
+                                var roadScore = parseInt(quarter[i].offensePoints) + 3;
+                                var homeScore = parseInt(quarter[i].defensePoints);
+                                var tdColor = "#ff0000";
+
+                                score = score + roadScore + "-" + homeScore;
+
+                                g.append("text")
+                                    .text(score)
+                                    .attr("x", fields[quarterNum - 1] + playWidth + 2)
+                                    .attr("y", vertPos + 4)
+                                    .style("font-family", "courier")
+                                    .style("font-size", "11px")
+                                    .style("fill", tdColor);
+
+                                g.append("text")
+                                    .text("FG")
+                                    .attr("x", fields[quarterNum - 1] + playWidth + 2)
+                                    .attr("y", vertPos - 8)
+                                    .style("font-family", "courier")
+                                    .style("font-size", "11px")
+                                    .style("fill", tdColor);
+
+                                var elem = document.getElementsByClassName("final-score")[0];
+                                elem.remove();
+                                var homeTeamName = teamList[homeTeamCode].teamName;
+                                var roadTeamName = teamList[roadTeamCode].teamName;
+
+                                var finalScoreText = homeTeamName + " " + homeScore + " — " + roadTeamName + " " + roadScore;
+
+                                var finalScore = g.append("text")
+                                    .text(finalScoreText)
+                                    .attr("x", 0)
+                                    .attr("y", 0)
+                                    .attr("class", "final-score")
+                                    .style("font-family", "verdana")
+                                    .style("font-size", "50px")
+                                    .style("fill", "white");
+
+                                var bbox = finalScore.node().getBBox();
+                                var scoreWidth = bbox.width;
+                                var scoreHeight = bbox.height;
+
+                                finalScore.attr("transform", "translate(" + padding + "," + (scoreHeight + (padding / 2)) + ")");
+                            }
+                        }
+                    }
+
+                }
+
+            }
+
+        }
+
+        </script>
+
+    </body>
+</html>     
